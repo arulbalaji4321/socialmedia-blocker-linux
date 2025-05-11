@@ -1,0 +1,86 @@
+#!/bin/bash
+
+# Must run as root
+if [[ $EUID -ne 0 ]]; then
+    echo "🚨 This script must be run as root."
+    echo "👉 Please run it using: sudo $0"
+    exit 1
+fi
+
+DOMAINS_FILE="domains.txt"
+HOSTS_FILE="/etc/hosts"
+TMP_FILE=$(mktemp)
+TMP_HOSTS=$(mktemp)
+cp "$HOSTS_FILE" "$TMP_HOSTS"  # Work on a temp copy
+
+CURRENT_CATEGORY=""
+declare -a CATEGORY_DOMAINS=()
+
+flush_category() {
+    [[ -z "$CURRENT_CATEGORY" ]] && return
+
+    IPV4_COMMENT="$CURRENT_CATEGORY"
+    IPV6_COMMENT="${CURRENT_CATEGORY} ipv6"
+
+    # Only add if not already in file
+    add_block() {
+        local ip="$1"
+        local comment="$2"
+        if grep -Fxq "$comment" "$TMP_HOSTS"; then
+            # Find insertion point
+            END_LINE=$(awk -v cat="$comment" '
+                $0 == cat { found=1; next }
+                found && $0 ~ /^#/ { exit }
+                found { line=NR }
+                END { print (line ? line : 0) }
+            ' "$TMP_HOSTS")
+            INSERT_LINE=$((END_LINE + 1))
+            for domain in "${CATEGORY_DOMAINS[@]}"; do
+                if ! grep -qE "^[[:space:]]*$ip[[:space:]]+$domain\$" "$TMP_HOSTS"; then
+                    sed -i "${INSERT_LINE}i$ip $domain" "$TMP_HOSTS"
+                    ((INSERT_LINE++))
+                fi
+            done
+        else
+            {
+                echo ""
+                echo "$comment"
+                for domain in "${CATEGORY_DOMAINS[@]}"; do
+                    if ! grep -qE "^[[:space:]]*$ip[[:space:]]+$domain\$" "$TMP_HOSTS"; then
+                        echo "$ip $domain"
+                    fi
+                done
+            } >> "$TMP_HOSTS"
+        fi
+    }
+
+    add_block "127.0.0.1" "$IPV4_COMMENT"
+    add_block "::1"       "$IPV6_COMMENT"
+
+    # Reset
+    CURRENT_CATEGORY=""
+    CATEGORY_DOMAINS=()
+}
+
+while IFS= read -r line || [ -n "$line" ]; do
+    line=$(echo "$line" | sed 's/^[ \t]*//;s/[ \t]*$//')
+    [[ -z "$line" ]] && continue
+
+    if [[ "$line" == \#* ]]; then
+        flush_category
+        CURRENT_CATEGORY="$line"
+    else
+        CATEGORY_DOMAINS+=("$line")
+    fi
+done < "$DOMAINS_FILE"
+
+flush_category
+
+# Backup and replace hosts file
+cp "$HOSTS_FILE" "${HOSTS_FILE}.bak"
+cat "$TMP_HOSTS" > "$HOSTS_FILE"
+
+echo "✅ Domains have been categorized and added (IPv4 & IPv6) to $HOSTS_FILE."
+
+rm "$TMP_FILE" "$TMP_HOSTS"
+

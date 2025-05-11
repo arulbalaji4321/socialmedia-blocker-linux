@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# Ensure the script is run with sudo/root
+if [[ $EUID -ne 0 ]]; then
+    echo "❌ This script must be run as root."
+    echo "💡 Try: sudo $0 <domain> <block|unblock>"
+    exit 1
+fi
+
+# Check arguments
+if [[ $# -ne 2 ]]; then
+    echo "Usage: $0 <domain.name> <block|unblock>"
+    exit 1
+fi
+
+DOMAIN="$1"
+ACTION="$2"
+HOSTS_FILE="/etc/hosts"
+TMP_FILE=$(mktemp)
+
+# Validate action
+if [[ "$ACTION" != "block" && "$ACTION" != "unblock" ]]; then
+    echo "Error: Action must be 'block' or 'unblock'"
+    exit 1
+fi
+
+# Build a regex to match subdomains or exact domain entries
+DOMAIN_REGEX="(127\.0\.0\.1|0\.0\.0\.0)[[:space:]]+([a-zA-Z0-9.-]+\.)?$DOMAIN"
+
+case "$ACTION" in
+    block)
+        echo "🔒 Blocking '$DOMAIN' and subdomains..."
+        awk -v regex="$DOMAIN_REGEX" '
+        $0 ~ "^#[[:space:]]*" && $0 ~ regex { sub("^#[[:space:]]*", "", $0); print; next }
+        { print }
+        ' "$HOSTS_FILE" > "$TMP_FILE"
+        ;;
+    unblock)
+        echo "🔓 Unblocking '$DOMAIN' and subdomains..."
+        awk -v regex="$DOMAIN_REGEX" '
+        $0 ~ regex && $0 !~ "^#[[:space:]]*" { print "#" $0; next }
+        { print }
+        ' "$HOSTS_FILE" > "$TMP_FILE"
+        ;;
+esac
+
+# Backup before overwrite
+cp "$HOSTS_FILE" "${HOSTS_FILE}.bak"
+
+# Apply the changes
+mv "$TMP_FILE" "$HOSTS_FILE"
+chmod 644 "$HOSTS_FILE"
+
+echo "✅ '$DOMAIN' and subdomains have been successfully $ACTIONED in $HOSTS_FILE."
+echo "✅ Blocked the domain $DOMAIN, Entried from /etc/hosts"
+sudo cat /etc/hosts | grep $DOMAIN 

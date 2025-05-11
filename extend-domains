@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# Must run as root
+if [[ $EUID -ne 0 ]]; then
+    echo "🚨 This script must be run as root."
+    echo "👉 Please run it using: sudo $0"
+    exit 1
+fi
+
+# Validate arguments
+if [[ $# -ne 2 ]]; then
+    echo "Usage: $0 <FileName> <Type>"
+    echo "Example: $0 Hosts.txt adultsites"
+    exit 1
+fi
+
+HOSTS_FILE="$1"
+CATEGORY="$2"
+DOMAINS_FILE="domains.txt"
+TMP_DOMAINS=$(mktemp)
+
+# Validate input file
+if [[ ! -f "$HOSTS_FILE" ]]; then
+    echo "🚨 The file '$HOSTS_FILE' does not exist."
+    exit 1
+fi
+
+# Backup domains.txt
+cp "$DOMAINS_FILE" "${DOMAINS_FILE}.bak"
+
+# Prepare category comment
+CATEGORY_TAG="#$CATEGORY"
+
+# Extract domains
+while IFS= read -r line || [[ -n "$line" ]]; do
+    domain=$(echo "$line" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\s+//; s/\s+//; s/^#.*//')
+    domain=$(echo "$domain" | sed 's/^[ \t]*//;s/[ \t]*$//') # trim
+    [[ "$domain" =~ ^[a-zA-Z0-9.-]+$ && "$domain" != "localhost" ]] || continue
+
+    # Avoid duplicates
+    if ! grep -qwF "$domain" "$DOMAINS_FILE"; then
+        echo "$domain" >> "$TMP_DOMAINS"
+    fi
+done < "$HOSTS_FILE"
+
+# Insert domains under category
+if [[ -s "$TMP_DOMAINS" ]]; then
+    if grep -Fxq "$CATEGORY_TAG" "$DOMAINS_FILE"; then
+        # Find line number of category tag
+        LINE_NUM=$(grep -Fnx "$CATEGORY_TAG" "$DOMAINS_FILE" | cut -d: -f1)
+        # Split file and insert domains
+        head -n "$LINE_NUM" "$DOMAINS_FILE" > "${DOMAINS_FILE}.new"
+        cat "$TMP_DOMAINS" >> "${DOMAINS_FILE}.new"
+        tail -n +$((LINE_NUM + 1)) "$DOMAINS_FILE" >> "${DOMAINS_FILE}.new"
+        mv "${DOMAINS_FILE}.new" "$DOMAINS_FILE"
+    else
+        echo -e "\n$CATEGORY_TAG" >> "$DOMAINS_FILE"
+        cat "$TMP_DOMAINS" >> "$DOMAINS_FILE"
+    fi
+    echo "✅ New domains added under $CATEGORY_TAG in '$DOMAINS_FILE'."
+else
+    echo "ℹ️ No new domains to add."
+fi
+
+rm "$TMP_DOMAINS"
+
+# Apply block
+echo "🔒 Updating /etc/hosts..."
+./blocker
+
