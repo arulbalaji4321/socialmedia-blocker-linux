@@ -24,8 +24,8 @@ if [[ "$ACTION" != "block" && "$ACTION" != "unblock" ]]; then
     exit 1
 fi
 
-# Build a regex to match subdomains or exact domain entries
-DOMAIN_REGEX="(127\.0\.0\.1|0\.0\.0\.0)[[:space:]]+([a-zA-Z0-9.-]+\.)?$DOMAIN"
+# Regex to match IPv4 and IPv6 entries for the domain or subdomains
+DOMAIN_REGEX="((127\.0\.0\.1|0\.0\.0\.0|::1)[[:space:]]+([a-zA-Z0-9.-]+\.)?$DOMAIN)"
 
 case "$ACTION" in
     block)
@@ -51,6 +51,7 @@ cp "$HOSTS_FILE" "${HOSTS_FILE}.bak"
 mv "$TMP_FILE" "$HOSTS_FILE"
 chmod 644 "$HOSTS_FILE"
 
-echo "✅ '$DOMAIN' and subdomains have been successfully $ACTIONED in $HOSTS_FILE."
-echo "✅ Blocked the domain $DOMAIN, Entried from /etc/hosts"
-sudo cat /etc/hosts | grep $DOMAIN 
+echo "✅ '$DOMAIN' and subdomains have been successfully ${ACTION}ed in $HOSTS_FILE."
+echo "🔍 Current entries for '$DOMAIN':"
+grep -i "$DOMAIN" "$HOSTS_FILE"
+
