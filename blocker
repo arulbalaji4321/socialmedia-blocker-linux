@@ -9,61 +9,101 @@ fi
 
 DOMAINS_FILE="domains.txt"
 HOSTS_FILE="/etc/hosts"
-TMP_FILE=$(mktemp)
 TMP_HOSTS=$(mktemp)
-cp "$HOSTS_FILE" "$TMP_HOSTS"  # Work on a temp copy
+
+cp "$HOSTS_FILE" "$TMP_HOSTS"
 
 CURRENT_CATEGORY=""
 declare -a CATEGORY_DOMAINS=()
 
+log() {
+    echo "🔧 $1"
+}
+
+add_ipv4_block() {
+    local ip="127.0.0.1"
+    local comment="$1"
+
+    log "Adding IPv4 entries under category: $comment"
+
+    if grep -Fxq "$comment" "$TMP_HOSTS"; then
+        END_LINE=$(awk -v cat="$comment" '
+            $0 == cat { found=1; next }
+            found && $0 ~ /^#/ { exit }
+            found { line=NR }
+            END { print (line ? line : 0) }
+        ' "$TMP_HOSTS")
+        INSERT_LINE=$((END_LINE + 1))
+
+        for domain in "${CATEGORY_DOMAINS[@]}"; do
+            if ! grep -qE "^[[:space:]]*$ip[[:space:]]+$domain\$" "$TMP_HOSTS"; then
+                log "  ➕ Inserting $ip $domain at line $INSERT_LINE"
+                sed -i "${INSERT_LINE}i$ip $domain" "$TMP_HOSTS"
+                ((INSERT_LINE++))
+            else
+                log "  ⚠️ Skipping duplicate: $ip $domain"
+            fi
+        done
+    else
+        log "  🔹 Category not found, appending new category: $comment"
+        echo "" >> "$TMP_HOSTS"
+        echo "$comment" >> "$TMP_HOSTS"
+        for domain in "${CATEGORY_DOMAINS[@]}"; do
+            echo "$ip $domain" >> "$TMP_HOSTS"
+            log "  ➕ Appended $ip $domain"
+        done
+    fi
+}
+
+add_ipv6_block() {
+    local ip="::1"
+    local comment="$1 ipv6"
+
+    log "Adding IPv6 entries under category: $comment"
+
+    if grep -Fxq "$comment" "$TMP_HOSTS"; then
+        END_LINE=$(awk -v cat="$comment" '
+            $0 == cat { found=1; next }
+            found && $0 ~ /^#/ { exit }
+            found { line=NR }
+            END { print (line ? line : 0) }
+        ' "$TMP_HOSTS")
+        INSERT_LINE=$((END_LINE + 1))
+
+        for domain in "${CATEGORY_DOMAINS[@]}"; do
+            if ! grep -qE "^[[:space:]]*$ip[[:space:]]+$domain\$" "$TMP_HOSTS"; then
+                log "  ➕ Inserting $ip $domain at line $INSERT_LINE"
+                sed -i "${INSERT_LINE}i$ip $domain" "$TMP_HOSTS"
+                ((INSERT_LINE++))
+            else
+                log "  ⚠️ Skipping duplicate: $ip $domain"
+            fi
+        done
+    else
+        log "  🔹 IPv6 category not found, appending: $comment"
+        echo "" >> "$TMP_HOSTS"
+        echo "$comment" >> "$TMP_HOSTS"
+        for domain in "${CATEGORY_DOMAINS[@]}"; do
+            echo "$ip $domain" >> "$TMP_HOSTS"
+            log "  ➕ Appended $ip $domain"
+        done
+    fi
+}
+
 flush_category() {
     [[ -z "$CURRENT_CATEGORY" ]] && return
 
-    IPV4_COMMENT="$CURRENT_CATEGORY"
-    IPV6_COMMENT="${CURRENT_CATEGORY} ipv6"
+    log "📦 Flushing category: $CURRENT_CATEGORY"
+    add_ipv4_block "$CURRENT_CATEGORY"
+    add_ipv6_block "$CURRENT_CATEGORY"
 
-    # Only add if not already in file
-    add_block() {
-        local ip="$1"
-        local comment="$2"
-        if grep -Fxq "$comment" "$TMP_HOSTS"; then
-            # Find insertion point
-            END_LINE=$(awk -v cat="$comment" '
-                $0 == cat { found=1; next }
-                found && $0 ~ /^#/ { exit }
-                found { line=NR }
-                END { print (line ? line : 0) }
-            ' "$TMP_HOSTS")
-            INSERT_LINE=$((END_LINE + 1))
-            for domain in "${CATEGORY_DOMAINS[@]}"; do
-                if ! grep -qE "^[[:space:]]*$ip[[:space:]]+$domain\$" "$TMP_HOSTS"; then
-                    sed -i "${INSERT_LINE}i$ip $domain" "$TMP_HOSTS"
-                    ((INSERT_LINE++))
-                fi
-            done
-        else
-            {
-                echo ""
-                echo "$comment"
-                for domain in "${CATEGORY_DOMAINS[@]}"; do
-                    if ! grep -qE "^[[:space:]]*$ip[[:space:]]+$domain\$" "$TMP_HOSTS"; then
-                        echo "$ip $domain"
-                    fi
-                done
-            } >> "$TMP_HOSTS"
-        fi
-    }
-
-    add_block "127.0.0.1" "$IPV4_COMMENT"
-    add_block "::1"       "$IPV6_COMMENT"
-
-    # Reset
     CURRENT_CATEGORY=""
     CATEGORY_DOMAINS=()
 }
 
+# Read and process domains.txt
 while IFS= read -r line || [ -n "$line" ]; do
-    line=$(echo "$line" | sed 's/^[ \t]*//;s/[ \t]*$//')
+    line=$(echo "$line" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim spaces
     [[ -z "$line" ]] && continue
 
     if [[ "$line" == \#* ]]; then
@@ -76,11 +116,12 @@ done < "$DOMAINS_FILE"
 
 flush_category
 
-# Backup and replace hosts file
+# Backup and replace /etc/hosts
 cp "$HOSTS_FILE" "${HOSTS_FILE}.bak"
-cat "$TMP_HOSTS" > "$HOSTS_FILE"
+cp "$TMP_HOSTS" "$HOSTS_FILE"
 
-echo "✅ Domains have been categorized and added (IPv4 & IPv6) to $HOSTS_FILE."
+log "✅ Hosts file updated with IPv4 and IPv6 domain blocks under categories."
+log "🗂️ Backup created at ${HOSTS_FILE}.bak"
 
-rm "$TMP_FILE" "$TMP_HOSTS"
+rm "$TMP_HOSTS"
 

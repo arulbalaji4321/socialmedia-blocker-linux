@@ -64,7 +64,4 @@ fi
 
 rm "$TMP_DOMAINS"
 
-# Apply block
-echo "🔒 Updating /etc/hosts..."
-./blocker
-
+echo "ℹ️ Run sudo ./blocker to add entries to /etc/hosts"
